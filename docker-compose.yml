@@ -13,6 +13,10 @@ x-environment:
   TAIGA_SITES_SCHEME: "${TAIGA_SCHEME}"
   TAIGA_SITES_DOMAIN: "${TAIGA_DOMAIN}"
   TAIGA_SUBPATH: "${SUBPATH}"
+  #TAIGA_BACK_EXTERNAL_URL: "http://localhost:8000"  # External URL for Taiga Back
+  #TAIGA_BACK_FRONT_PUBLIC: "http://localhost:8000"  # Public URL for Taiga Back
+  TAIGA_BACK_REGISTRATION_PUBLIC: "true"  # Enable public registration
+  #TAIGA_BACK_EVENTS_URL: "https://your-n8n-url.com/webhook-alias"  # N8N webhook URL
   # Email settings.
   EMAIL_BACKEND: "django.core.mail.backends.${EMAIL_BACKEND}.EmailBackend"
   DEFAULT_FROM_EMAIL: "${EMAIL_DEFAULT_FROM}"
@@ -30,7 +34,9 @@ x-environment:
   # ...your customizations go here
   PUBLIC_REGISTER_ENABLED: "True"
   ENABLE_SLACK: "True"
-
+  SESSION_COOKIE_SECURE: "False"
+  CSRF_COOKIE_SECURE: "False"
+  
 
 x-volumes:
   &default-back-volumes
@@ -42,6 +48,7 @@ x-volumes:
 services:
   taiga-db:
     image: postgres:12.3
+    hostname: taiga-db
     environment:
       POSTGRES_DB: "taiga"
       POSTGRES_USER: "${POSTGRES_USER}"
@@ -59,8 +66,12 @@ services:
 
   taiga-back:
     image: taigaio/taiga-back:latest
+    container_name: taiga-back
+    hostname: taiga-back
     environment: *default-back-environment
     volumes: *default-back-volumes
+    ports:
+      - '8000:8000'
     networks:
       - taiga
     depends_on:
@@ -101,18 +112,28 @@ services:
 
   taiga-front:
     image: taigaio/taiga-front:latest
+    container_name: taiga-front
+    hostname: taiga-front
     environment:
-      TAIGA_URL: "${TAIGA_SCHEME}://${TAIGA_DOMAIN}"
-      TAIGA_WEBSOCKETS_URL: "${WEBSOCKETS_SCHEME}://${TAIGA_DOMAIN}"
-      TAIGA_SUBPATH: "${SUBPATH}"
-      PUBLIC_REGISTER_ENABLED: "true"
-      ENABLE_SLACK: "True"
-
-      # ...your customizations go here
+      - TAIGA_URL=http://localhost:8000
+      - TAIGA_WEBSOCKETS_URL=ws://localhost:8000
+      - PUBLIC_REGISTER_ENABLED=true
+      - ENABLE_SLACK=True
+      - TAIGA_SECRET_KEY="akachukwu"
     networks:
       - taiga
-    # volumes:
-    #   - ./conf.json:/usr/share/nginx/html/conf.json
+    ports:
+      - '9000:80'
+    volumes:
+      - taiga-static-data:/taiga/static
+      - taiga-media-data:/taiga/media
+#      - ./conf.json:/usr/share/nginx/html/conf.json
+#    depends_on:
+#      taiga-events-rabbitmq:
+#        condition: service_started
+    depends_on:
+      taiga-async-rabbitmq:  
+        condition: service_started
 
   taiga-events:
     image: taigaio/taiga-events:latest
@@ -123,7 +144,7 @@ services:
     networks:
       - taiga
     depends_on:
-      taiga-events-rabbitmq:
+      taiga-async-rabbitmq:
         condition: service_started
 
   taiga-events-rabbitmq:
@@ -133,6 +154,7 @@ services:
       RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER}"
       RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASS}"
       RABBITMQ_DEFAULT_VHOST: "${RABBITMQ_VHOST}"
+      SECRET_KEY: "${SECRET_KEY}"
     hostname: "taiga-events-rabbitmq"
     volumes:
       - taiga-events-rabbitmq-data:/var/lib/rabbitmq
@@ -146,21 +168,9 @@ services:
       SECRET_KEY: "${SECRET_KEY}"
     networks:
       - taiga
-
-  taiga-gateway:
-    image: nginx:1.19-alpine
-    ports:
-      - "9000:80"
-    volumes:
-      - ./taiga-gateway/taiga.conf:/etc/nginx/conf.d/default.conf
-      - taiga-static-data:/taiga/static
-      - taiga-media-data:/taiga/media
-    networks:
-      - taiga
     depends_on:
-      - taiga-front
-      - taiga-back
-      - taiga-events
+      taiga-events-rabbitmq:
+        condition: service_started  
 
 volumes:
   taiga-static-data:
@@ -171,3 +181,5 @@ volumes:
 
 networks:
   taiga:
+#    external: true
+    driver: bridge

@@ -40,3 +40,8 @@ services:
     volumes: *default-back-volumes
     networks:
       - taiga
+
+networks:
+  taiga:
+#    external: true
+    driver: bridge
